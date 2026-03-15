@@ -1,0 +1,8 @@
+torch
+torchaudio
+openai-whisper
+librosa
+soundfile
+numpy
+pandas
+tqdm
