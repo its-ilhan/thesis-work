@@ -23,8 +23,8 @@ VECTORS_PATH = "/content/processed/phase4_vectors.npz"
 OUTPUT_DIR   = "/content/processed"
 MODEL_PATH   = "/content/processed/best_model.pt"
 
-BATCH_SIZE   = 16
-EPOCHS       = 30
+BATCH_SIZE   = 32
+EPOCHS       = 50
 LR           = 1e-4
 WEIGHT_DECAY = 1e-4
 VAL_SPLIT    = 0.2
@@ -269,7 +269,7 @@ def train(vectors_path: str = VECTORS_PATH):
     # ── Training loop ──
     best_val_loss   = float("inf")
     patience_count  = 0
-    EARLY_STOP      = 8
+    EARLY_STOP      = 15
 
     train_losses, val_losses = [], []
     train_accs,   val_accs   = [], []
