@@ -30,7 +30,7 @@ sentiment_analyzer = pipeline(
 # ─────────────────────────────────────────────
 SAMPLE_RATE     = 16000
 CHUNK_DURATION  = 10
-DATASET_ROOT    = "/content/thesis-work/dataset/for-norm"
+DATASET_ROOT    = "/content/thesis-work/dataset"
 OUTPUT_DIR      = "/content/processed"
 WHISPER_MODEL   = "base"
 
@@ -121,10 +121,14 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
     # all_files = real_files + fake_files
     # print(f"Full dataset: {len(real_files)} real + {len(fake_files)} fake files.\n")
 
-    real_files = real_files[:500]
-    fake_files = fake_files[:500]
+    # Balance the classes at whatever the smaller class size is
+    min_count  = min(len(real_files), len(fake_files))
+    real_files = real_files[:min_count]
+    fake_files = fake_files[:min_count]
     all_files  = real_files + fake_files
-    print(f"Training run: {len(real_files)} real + {len(fake_files)} fake files.\n")
+
+    print(f"Full dataset: {len(real_files)} real + {len(fake_files)} fake files.")
+    print(f"Total files  : {len(all_files)}\n")
 
 
     for filepath in tqdm(all_files, desc="Phase 1 Progress"):
