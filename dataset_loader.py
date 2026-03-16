@@ -6,6 +6,8 @@ import soundfile as sf
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import spacy
+from transformers import pipeline
 
 # ─────────────────────────────────────────────
 # CONFIG — matches your Colab folder structure
@@ -155,9 +157,6 @@ if __name__ == "__main__":
 # PHASE 2: NLP & LINGUISTIC FEATURE EXTRACTION
 # ═══════════════════════════════════════════════════════════════
 
-import ast
-import spacy
-from transformers import pipeline
 
 # ── Load models once at module level so they aren't reloaded per row ──
 nlp = spacy.load("en_core_web_sm")
