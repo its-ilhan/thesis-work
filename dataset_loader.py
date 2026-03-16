@@ -121,14 +121,15 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
     # all_files = real_files + fake_files
     # print(f"Full dataset: {len(real_files)} real + {len(fake_files)} fake files.\n")
 
-    # Balance the classes at whatever the smaller class size is
-    min_count  = min(len(real_files), len(fake_files))
-    real_files = real_files[:min_count]
-    fake_files = fake_files[:min_count]
+    CAP = 3000  # adjust this number based on available time
+
+    real_files = real_files[:CAP]
+    fake_files = fake_files[:CAP]
     all_files  = real_files + fake_files
 
-    print(f"Full dataset: {len(real_files)} real + {len(fake_files)} fake files.")
+    print(f"Training run: {len(real_files)} real + {len(fake_files)} fake files.")
     print(f"Total files  : {len(all_files)}\n")
+
 
 
     for filepath in tqdm(all_files, desc="Phase 1 Progress"):
