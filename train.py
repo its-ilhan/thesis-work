@@ -315,22 +315,48 @@ def train(vectors_path: str = VECTORS_PATH):
         model, val_loader, criterion, device
     )
 
-    print("\n" + "="*55)
-    print("FINAL EVALUATION RESULTS")
-    print("="*55)
-    print(classification_report(val_labels, val_preds, target_names=["Fake", "Real"]))
+    # Compute all metrics
+    from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, roc_auc_score
+    
+    accuracy = accuracy_score(val_labels, val_preds)
+    cm = confusion_matrix(val_labels, val_preds)
+    tn, fp, fn, tp = cm.ravel()
+
+    precision_fake = tn / (tn + fn) if (tn + fn) > 0 else 0
+    recall_fake    = tn / (tn + fp) if (tn + fp) > 0 else 0
+    precision_real = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall_real    = tp / (tp + fn) if (tp + fn) > 0 else 0
 
     try:
         auc = roc_auc_score(val_labels, val_probs)
-        print(f"AUC-ROC : {auc:.4f}")
     except Exception:
-        print("AUC-ROC : not available (need both classes in val set)")
+        auc = 0.0
 
     try:
         eer = compute_eer(val_labels, val_probs)
-        print(f"EER     : {eer:.4f}  ({eer*100:.2f}%)")
     except Exception:
-        print("EER     : not available")
+        eer = 0.0
+
+    print("\n" + "="*60)
+    print("         FINAL EVALUATION RESULTS")
+    print("="*60)
+    print(f"\n  {'Metric':<30} {'Value':>10}")
+    print(f"  {'-'*42}")
+    print(f"  {'Overall Accuracy':<30} {accuracy*100:>9.2f}%")
+    print(f"  {'AUC-ROC':<30} {auc:>10.4f}")
+    print(f"  {'EER':<30} {eer*100:>9.2f}%")
+    print(f"\n  {'--- Fake Detection ---':<30}")
+    print(f"  {'Precision (Fake)':<30} {precision_fake*100:>9.2f}%")
+    print(f"  {'Recall (Fake)':<30} {recall_fake*100:>9.2f}%")
+    print(f"\n  {'--- Real Detection ---':<30}")
+    print(f"  {'Precision (Real)':<30} {precision_real*100:>9.2f}%")
+    print(f"  {'Recall (Real)':<30} {recall_real*100:>9.2f}%")
+    print(f"\n  {'--- Confusion Matrix ---':<30}")
+    print(f"  {'True Fake (correct)':<30} {tn:>10}")
+    print(f"  {'False Real (fake→real)':<30} {fp:>10}")
+    print(f"  {'False Fake (real→fake)':<30} {fn:>10}")
+    print(f"  {'True Real (correct)':<30} {tp:>10}")
+    print("="*60)
 
     # ── Plots ──
     plot_training_curves(train_losses, val_losses, train_accs, val_accs)
