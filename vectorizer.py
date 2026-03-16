@@ -86,17 +86,14 @@ def get_bert_embedding(text: str, tokenizer, model) -> np.ndarray:
 # ─────────────────────────────────────────────
 
 def clean_numeric_features(df: pd.DataFrame, fit: bool = True) -> np.ndarray:
-    """
-    Extracts all numeric feature columns, imputes any missing values
-    with column means, then standard-scales everything to zero mean
-    and unit variance.
-
-    fit=True  → fit the imputer and scaler on this data (training set)
-    fit=False → use already-fitted imputer and scaler (validation/test)
-    """
-    # Keep only the feature columns that exist in this dataframe
     available = [c for c in FEATURE_COLS if c in df.columns]
-    X = df[available].values.astype(np.float64)
+    missing   = [c for c in FEATURE_COLS if c not in df.columns]
+
+    if missing:
+        print(f"  [WARN] These feature cols are missing from CSV: {missing}")
+
+    # Explicitly select ONLY the feature columns — nothing else
+    X = df[available].copy().values.astype(np.float64)
 
     if fit:
         imputer = SimpleImputer(strategy="mean")
@@ -105,7 +102,7 @@ def clean_numeric_features(df: pd.DataFrame, fit: bool = True) -> np.ndarray:
         X = scaler.fit_transform(X)
         joblib.dump(imputer, IMPUTER_PATH)
         joblib.dump(scaler,  SCALER_PATH)
-        print(f"  Imputer and scaler saved to {OUTPUT_DIR}")
+        print(f"  Imputer and scaler saved.")
     else:
         imputer = joblib.load(IMPUTER_PATH)
         scaler  = joblib.load(SCALER_PATH)
