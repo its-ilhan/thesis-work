@@ -269,7 +269,7 @@ def train(vectors_path: str = VECTORS_PATH):
     # ── Training loop ──
     best_val_loss   = float("inf")
     patience_count  = 0
-    EARLY_STOP      = 15
+    EARLY_STOP      = 20
 
     train_losses, val_losses = [], []
     train_accs,   val_accs   = [], []
