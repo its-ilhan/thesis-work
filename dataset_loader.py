@@ -115,9 +115,16 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
     # Separate real and fake files
     real_files = [f for f in all_files if "real" in f.lower().replace("\\", "/").split("/")]
     fake_files = [f for f in all_files if "fake" in f.lower().replace("\\", "/").split("/")]
+    
 
-    all_files = real_files + fake_files
-    print(f"Full dataset: {len(real_files)} real + {len(fake_files)} fake files.\n")
+    #Run full dataset
+    # all_files = real_files + fake_files
+    # print(f"Full dataset: {len(real_files)} real + {len(fake_files)} fake files.\n")
+
+    real_files = real_files[:500]
+    fake_files = fake_files[:500]
+    all_files  = real_files + fake_files
+    print(f"Training run: {len(real_files)} real + {len(fake_files)} fake files.\n")
 
 
     for filepath in tqdm(all_files, desc="Phase 1 Progress"):
