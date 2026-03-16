@@ -6,3 +6,4 @@ soundfile
 numpy
 pandas
 tqdm
+praat-parselmouth
