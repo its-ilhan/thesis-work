@@ -7,3 +7,6 @@ numpy
 pandas
 tqdm
 praat-parselmouth
+scikit-learn
+joblib
+transformers
