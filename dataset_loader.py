@@ -112,8 +112,17 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
     print(f"Found {len(all_files)} audio files.\n")
 
     # ── Safety cap: remove when ready for full dataset ──
-    all_files = all_files[:20]
-    print("⚠️  Running on first 20 files only. Remove cap when ready.\n")
+    # Separate real and fake files
+    real_files = [f for f in all_files if "real" in f.lower().replace("\\", "/").split("/")]
+    fake_files = [f for f in all_files if "fake" in f.lower().replace("\\", "/").split("/")]
+
+    # Take 10 from each to keep balance
+    real_files = real_files[:10]
+    fake_files = fake_files[:10]
+    all_files  = real_files + fake_files
+
+    print(f"⚠️  Test cap: {len(real_files)} real + {len(fake_files)} fake files.\n")
+
 
     for filepath in tqdm(all_files, desc="Phase 1 Progress"):
         try:
