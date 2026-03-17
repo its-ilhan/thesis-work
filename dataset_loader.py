@@ -121,7 +121,7 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
     # all_files = real_files + fake_files
     # print(f"Full dataset: {len(real_files)} real + {len(fake_files)} fake files.\n")
 
-    CAP = 7500  # adjust this number based on available time
+    CAP = 9000  # adjust this number based on available time
 
     real_files = real_files[:CAP]
     fake_files = fake_files[:CAP]
