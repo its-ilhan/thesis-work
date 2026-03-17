@@ -30,7 +30,7 @@ sentiment_analyzer = pipeline(
 # ─────────────────────────────────────────────
 SAMPLE_RATE     = 16000
 CHUNK_DURATION  = 10
-DATASET_ROOT    = "/content/thesis-work/dataset"
+DATASET_ROOT    = "/content/drive/MyDrive/thesis_dataset"
 OUTPUT_DIR      = "/content/processed"
 WHISPER_MODEL   = "base"
 
