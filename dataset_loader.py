@@ -105,7 +105,7 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
 
     all_files = []
     for root, _, files in os.walk(DATASET_ROOT):
-        for fname in files:
+        for fname in sorted(files):  # sort files within each folder
             if os.path.splitext(fname)[1].lower() in audio_extensions:
                 all_files.append(os.path.join(root, fname))
 
@@ -113,11 +113,15 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
 
     # Separate real and fake
     real_files = [f for f in all_files
-                if "real" in f.lower().replace("\\", "/").split("/")]
+                  if "real" in f.lower().replace("\\", "/").split("/")]
     fake_files = [f for f in all_files
-                if "fake" in f.lower().replace("\\", "/").split("/")]
+                  if "fake" in f.lower().replace("\\", "/").split("/")]
 
-    # Shuffle with fixed seed for reproducibility
+    # Sort first for consistent base ordering across all systems
+    real_files = sorted(real_files)
+    fake_files = sorted(fake_files)
+
+    # Then shuffle with a fixed seed — same shuffle every single run
     import random
     rng = random.Random(42)
     rng.shuffle(real_files)
@@ -130,8 +134,6 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
 
     print(f"Training run: {len(real_files)} real + {len(fake_files)} fake files.")
     print(f"Total files  : {len(all_files)}\n")
-
-
 
     for filepath in tqdm(all_files, desc="Phase 1 Progress"):
         try:

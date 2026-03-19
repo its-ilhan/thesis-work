@@ -32,8 +32,8 @@ SEED         = 42
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+import random
 def set_all_seeds(seed):
-    import random
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
