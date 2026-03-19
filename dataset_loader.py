@@ -111,31 +111,19 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
 
     print(f"Found {len(all_files)} audio files.\n")
 
-    # Separate real and fake, sort for consistency
-    real_files = sorted([f for f in all_files
-                        if "real" in f.lower().replace("\\", "/").split("/")])
-    fake_files = sorted([f for f in all_files
-                        if "fake" in f.lower().replace("\\", "/").split("/")])
+    # Separate real and fake
+    real_files = [f for f in all_files
+                if "real" in f.lower().replace("\\", "/").split("/")]
+    fake_files = [f for f in all_files
+                if "fake" in f.lower().replace("\\", "/").split("/")]
 
-    # Shuffle with fixed seed — same files selected every run
+    # Shuffle with fixed seed for reproducibility
     import random
-    random.seed(42)
-    random.shuffle(real_files)
-    random.seed(42)
-    random.shuffle(fake_files)
+    rng = random.Random(42)
+    rng.shuffle(real_files)
+    rng.shuffle(fake_files)
 
-    # ── Safety cap: remove when ready for full dataset ──
-    # Separate real and fake files
-    real_files = [f for f in all_files if "real" in f.lower().replace("\\", "/").split("/")]
-    fake_files = [f for f in all_files if "fake" in f.lower().replace("\\", "/").split("/")]
-    
-
-    #Run full dataset
-    # all_files = real_files + fake_files
-    # print(f"Full dataset: {len(real_files)} real + {len(fake_files)} fake files.\n")
-
-    CAP = 3000  # adjust this number based on available time
-
+    CAP = 3000
     real_files = real_files[:CAP]
     fake_files = fake_files[:CAP]
     all_files  = real_files + fake_files
