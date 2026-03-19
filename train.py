@@ -1,13 +1,14 @@
 import os
+import random
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    accuracy_score, confusion_matrix,
-    roc_auc_score, classification_report
-)
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score
+import joblib
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -22,9 +23,11 @@ from model import build_model, BERT_DIM, NUMERIC_DIM
 VECTORS_PATH = "/content/processed/phase4_vectors.npz"
 OUTPUT_DIR   = "/content/processed"
 MODEL_PATH   = "/content/processed/best_model.pt"
+SCALER_PATH  = "/content/processed/scaler.pkl"
+IMPUTER_PATH = "/content/processed/imputer.pkl"
 
-BATCH_SIZE   = 16
-EPOCHS       = 50
+BATCH_SIZE   = 32
+EPOCHS       = 100
 LR           = 1e-4
 WEIGHT_DECAY = 1e-4
 VAL_SPLIT    = 0.2
@@ -32,7 +35,7 @@ SEED         = 42
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-import random
+
 def set_all_seeds(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -40,8 +43,8 @@ def set_all_seeds(seed):
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    os.environ['PYTHONHASHSEED'] = str(seed)
+    torch.backends.cudnn.benchmark     = False
+    os.environ['PYTHONHASHSEED']       = str(seed)
 
 set_all_seeds(SEED)
 
@@ -51,14 +54,10 @@ set_all_seeds(SEED)
 # ─────────────────────────────────────────────
 
 class AudioChunkDataset(Dataset):
-    """
-    Wraps the Phase 4 numpy arrays into a PyTorch Dataset.
-    Splits each 811-dim vector back into BERT (768) and numeric (43) parts.
-    """
-    def __init__(self, X: np.ndarray, y: np.ndarray):
-        self.bert    = torch.tensor(X[:, :BERT_DIM],   dtype=torch.float32)
-        self.numeric = torch.tensor(X[:, BERT_DIM:],   dtype=torch.float32)
-        self.labels  = torch.tensor(y,                 dtype=torch.float32)
+    def __init__(self, bert: np.ndarray, numeric: np.ndarray, y: np.ndarray):
+        self.bert    = torch.tensor(bert,    dtype=torch.float32)
+        self.numeric = torch.tensor(numeric, dtype=torch.float32)
+        self.labels  = torch.tensor(y,       dtype=torch.float32)
 
     def __len__(self):
         return len(self.labels)
@@ -68,76 +67,43 @@ class AudioChunkDataset(Dataset):
 
 
 # ─────────────────────────────────────────────
-# AUDIO AUGMENTATION (training only)
+# HELPERS
 # ─────────────────────────────────────────────
 
-def augment_numeric_features(numeric: torch.Tensor) -> torch.Tensor:
-    """
-    Applies light random noise to numeric features during training.
-    This is the feature-space equivalent of audio augmentation —
-    it prevents the model from memorizing exact feature values
-    and forces it to learn robust patterns instead.
-    Only applied during training, never during validation/testing.
-    """
-    noise = torch.randn_like(numeric) * 0.01
-    return numeric + noise
+def augment_numeric(numeric: torch.Tensor) -> torch.Tensor:
+    return numeric + torch.randn_like(numeric) * 0.01
 
-
-# ─────────────────────────────────────────────
-# TRAINING HELPERS
-# ─────────────────────────────────────────────
 
 def get_sampler(y_train: np.ndarray) -> WeightedRandomSampler:
-    """
-    Creates a weighted sampler so that real and fake samples are
-    seen equally often during training regardless of class imbalance.
-    """
-    class_counts = np.bincount(y_train.astype(int))
-    weights      = 1.0 / class_counts
+    class_counts   = np.bincount(y_train.astype(int))
+    weights        = 1.0 / class_counts
     sample_weights = torch.tensor(
-        [weights[int(label)] for label in y_train],
-        dtype=torch.float32
+        [weights[int(l)] for l in y_train], dtype=torch.float32
     )
-    return WeightedRandomSampler(
-        sample_weights,
-        num_samples=len(sample_weights),
-        replacement=True
-    )
+    return WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
 
 
 def compute_eer(labels: np.ndarray, scores: np.ndarray) -> float:
-    """
-    Computes Equal Error Rate (EER) — the point where false acceptance
-    rate equals false rejection rate. Lower EER = better model.
-    Standard evaluation metric for audio deepfake detection.
-    """
     from sklearn.metrics import roc_curve
     fpr, tpr, _ = roc_curve(labels, scores)
     fnr         = 1 - tpr
-    # Find the threshold where FPR and FNR are closest
-    eer_idx = np.argmin(np.abs(fpr - fnr))
-    eer     = (fpr[eer_idx] + fnr[eer_idx]) / 2.0
-    return float(eer)
+    idx         = np.argmin(np.abs(fpr - fnr))
+    return float((fpr[idx] + fnr[idx]) / 2.0)
 
 
-def train_one_epoch(model, loader, optimizer, criterion, device, augment=True):
+def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
     total_loss, all_preds, all_labels = 0.0, [], []
 
     for bert, numeric, labels in loader:
         bert    = bert.to(device)
-        numeric = numeric.to(device)
+        numeric = augment_numeric(numeric).to(device)
         labels  = labels.to(device)
-
-        if augment:
-            numeric = augment_numeric_features(numeric)
 
         optimizer.zero_grad()
         logits = model(bert, numeric).squeeze(1)
         loss   = criterion(logits, labels)
         loss.backward()
-
-        # Gradient clipping — prevents exploding gradients
         nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
@@ -146,9 +112,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device, augment=True):
         all_preds.extend(preds)
         all_labels.extend(labels.long().cpu().numpy())
 
-    avg_loss = total_loss / len(loader)
-    accuracy = accuracy_score(all_labels, all_preds)
-    return avg_loss, accuracy
+    return total_loss / len(loader), accuracy_score(all_labels, all_preds)
 
 
 def evaluate(model, loader, criterion, device):
@@ -171,9 +135,11 @@ def evaluate(model, loader, criterion, device):
             all_labels.extend(labels.long().cpu().numpy())
             all_probs.extend(probs.cpu().numpy())
 
-    avg_loss = total_loss / len(loader)
-    accuracy = accuracy_score(all_labels, all_preds)
-    return avg_loss, accuracy, np.array(all_labels), np.array(all_preds), np.array(all_probs)
+    return (total_loss / len(loader),
+            accuracy_score(all_labels, all_preds),
+            np.array(all_labels),
+            np.array(all_preds),
+            np.array(all_probs))
 
 
 # ─────────────────────────────────────────────
@@ -182,106 +148,113 @@ def evaluate(model, loader, criterion, device):
 
 def plot_training_curves(train_losses, val_losses, train_accs, val_accs):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-
     ax1.plot(train_losses, label="Train Loss")
     ax1.plot(val_losses,   label="Val Loss")
-    ax1.set_title("Loss")
-    ax1.set_xlabel("Epoch")
-    ax1.legend()
-
+    ax1.set_title("Loss"); ax1.set_xlabel("Epoch"); ax1.legend()
     ax2.plot(train_accs, label="Train Accuracy")
     ax2.plot(val_accs,   label="Val Accuracy")
-    ax2.set_title("Accuracy")
-    ax2.set_xlabel("Epoch")
-    ax2.legend()
-
+    ax2.set_title("Accuracy"); ax2.set_xlabel("Epoch"); ax2.legend()
     plt.tight_layout()
     path = os.path.join(OUTPUT_DIR, "training_curves.png")
-    plt.savefig(path)
-    plt.close()
+    plt.savefig(path); plt.close()
     print(f"  Training curves saved to: {path}")
 
 
 def plot_confusion_matrix(labels, preds):
-    cm = confusion_matrix(labels, preds)
+    cm  = confusion_matrix(labels, preds)
     fig, ax = plt.subplots(figsize=(5, 4))
-    im = ax.imshow(cm, cmap="Blues")
+    im  = ax.imshow(cm, cmap="Blues")
     ax.set_xticks([0, 1]); ax.set_yticks([0, 1])
     ax.set_xticklabels(["Fake", "Real"])
     ax.set_yticklabels(["Fake", "Real"])
-    ax.set_xlabel("Predicted")
-    ax.set_ylabel("Actual")
+    ax.set_xlabel("Predicted"); ax.set_ylabel("Actual")
     ax.set_title("Confusion Matrix")
     for i in range(2):
         for j in range(2):
             ax.text(j, i, str(cm[i, j]), ha="center", va="center", color="black")
-    plt.colorbar(im)
-    plt.tight_layout()
+    plt.colorbar(im); plt.tight_layout()
     path = os.path.join(OUTPUT_DIR, "confusion_matrix.png")
-    plt.savefig(path)
-    plt.close()
+    plt.savefig(path); plt.close()
     print(f"  Confusion matrix saved to: {path}")
 
 
 # ─────────────────────────────────────────────
-# MASTER FUNCTION: Full Training Pipeline
+# MASTER TRAINING FUNCTION
 # ─────────────────────────────────────────────
 
 def train(vectors_path: str = VECTORS_PATH):
     set_all_seeds(SEED)
-    # ── Device ──
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}\n")
 
-    # ── Load Phase 4 vectors ──
+    # ── Load raw vectors ──
     print("Loading Phase 4 vectors...")
-    data = np.load(vectors_path, allow_pickle=True)
-    X, y = data["X"], data["y"]
+    data    = np.load(vectors_path, allow_pickle=True)
+    bert    = data["bert"]       # (N, 768)
+    numeric = data["numeric"]    # (N, 43) — raw, unscaled
+    y       = data["y"]
+
     print(f"  Total samples : {len(y)}")
     print(f"  Real          : {np.sum(y==1)}")
     print(f"  Fake          : {np.sum(y==0)}")
-    print(f"  Feature dim   : {X.shape[1]}\n")
+    print(f"  BERT dim      : {bert.shape[1]}")
+    print(f"  Numeric dim   : {numeric.shape[1]}\n")
 
-    # ── Train / Val split ──
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=VAL_SPLIT,
-        random_state=SEED, stratify=y
+    # ── Train / Val split on indices ──
+    idx = np.arange(len(y))
+    idx_train, idx_val = train_test_split(
+        idx, test_size=VAL_SPLIT, random_state=SEED, stratify=y
     )
-    print(f"Train samples: {len(y_train)}  |  Val samples: {len(y_val)}\n")
+    print(f"Train samples: {len(idx_train)}  |  Val samples: {len(idx_val)}\n")
+
+    bert_train    = bert[idx_train];    bert_val    = bert[idx_val]
+    numeric_train = numeric[idx_train]; numeric_val = numeric[idx_val]
+    y_train       = y[idx_train];       y_val       = y[idx_val]
+
+    # ── Fit imputer and scaler ONLY on training data ──
+    # This prevents data leakage — val set is transformed using
+    # statistics learned only from the training set
+    print("Fitting imputer and scaler on training data only...")
+    imputer = SimpleImputer(strategy="mean")
+    scaler  = StandardScaler()
+
+    numeric_train = imputer.fit_transform(numeric_train)
+    numeric_train = scaler.fit_transform(numeric_train)
+
+    numeric_val   = imputer.transform(numeric_val)
+    numeric_val   = scaler.transform(numeric_val)
+
+    joblib.dump(imputer, IMPUTER_PATH)
+    joblib.dump(scaler,  SCALER_PATH)
+    print(f"  Imputer and scaler saved (fit on train only)\n")
+
+    numeric_train = numeric_train.astype(np.float32)
+    numeric_val   = numeric_val.astype(np.float32)
 
     # ── Datasets and loaders ──
-    train_dataset = AudioChunkDataset(X_train, y_train)
-    val_dataset   = AudioChunkDataset(X_val,   y_val)
+    train_dataset = AudioChunkDataset(bert_train, numeric_train, y_train)
+    val_dataset   = AudioChunkDataset(bert_val,   numeric_val,   y_val)
 
     sampler      = get_sampler(y_train)
-    train_loader = DataLoader(
-        train_dataset, batch_size=BATCH_SIZE,
-        sampler=sampler
-    )
-    val_loader   = DataLoader(
-        val_dataset, batch_size=BATCH_SIZE, shuffle=False
-    )
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, sampler=sampler)
+    val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False)
 
     # ── Model, optimizer, loss ──
     model     = build_model(device)
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY
-    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", patience=4, factor=0.5
+        optimizer, mode="min", patience=5, factor=0.5
     )
 
-    # BCEWithLogitsLoss combines sigmoid + binary cross entropy
-    # more numerically stable than applying sigmoid manually then BCE
     pos_weight = torch.tensor(
         [np.sum(y_train==0) / max(np.sum(y_train==1), 1)]
     ).to(device)
-    criterion  = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # ── Training loop ──
-    best_val_loss   = float("inf")
-    patience_count  = 0
-    EARLY_STOP      = 20
+    best_val_loss  = float("inf")
+    patience_count = 0
+    EARLY_STOP     = 20
 
     train_losses, val_losses = [], []
     train_accs,   val_accs   = [], []
@@ -297,7 +270,6 @@ def train(vectors_path: str = VECTORS_PATH):
         val_loss, val_acc, _, _, _ = evaluate(
             model, val_loader, criterion, device
         )
-
         scheduler.step(val_loss)
 
         train_losses.append(train_loss)
@@ -307,7 +279,6 @@ def train(vectors_path: str = VECTORS_PATH):
 
         print(f"{epoch:>5} | {train_loss:>10.4f} | {train_acc:>9.4f} | {val_loss:>8.4f} | {val_acc:>7.4f}")
 
-        # Save best model
         if val_loss < best_val_loss:
             best_val_loss  = val_loss
             patience_count = 0
@@ -327,11 +298,8 @@ def train(vectors_path: str = VECTORS_PATH):
         model, val_loader, criterion, device
     )
 
-    # Compute all metrics
-    from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, roc_auc_score
-    
     accuracy = accuracy_score(val_labels, val_preds)
-    cm = confusion_matrix(val_labels, val_preds)
+    cm       = confusion_matrix(val_labels, val_preds)
     tn, fp, fn, tp = cm.ravel()
 
     precision_fake = tn / (tn + fn) if (tn + fn) > 0 else 0
@@ -339,15 +307,11 @@ def train(vectors_path: str = VECTORS_PATH):
     precision_real = tp / (tp + fp) if (tp + fp) > 0 else 0
     recall_real    = tp / (tp + fn) if (tp + fn) > 0 else 0
 
-    try:
-        auc = roc_auc_score(val_labels, val_probs)
-    except Exception:
-        auc = 0.0
+    try:    auc = roc_auc_score(val_labels, val_probs)
+    except: auc = 0.0
 
-    try:
-        eer = compute_eer(val_labels, val_probs)
-    except Exception:
-        eer = 0.0
+    try:    eer = compute_eer(val_labels, val_probs)
+    except: eer = 0.0
 
     print("\n" + "="*60)
     print("         FINAL EVALUATION RESULTS")
@@ -370,7 +334,6 @@ def train(vectors_path: str = VECTORS_PATH):
     print(f"  {'True Real (correct)':<30} {tp:>10}")
     print("="*60)
 
-    # ── Plots ──
     plot_training_curves(train_losses, val_losses, train_accs, val_accs)
     plot_confusion_matrix(val_labels, val_preds)
 

@@ -1,22 +1,14 @@
 import os
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from sklearn.impute import SimpleImputer
-import joblib
 from tqdm import tqdm
 
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
-OUTPUT_DIR   = "/content/processed"
-SCALER_PATH  = "/content/processed/scaler.pkl"
-IMPUTER_PATH = "/content/processed/imputer.pkl"
-
+OUTPUT_DIR = "/content/processed"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# All numeric feature columns produced by Phase 2 and Phase 3
-# BERT embeddings are handled separately
 FEATURE_COLS = [
     # Phase 2 — Lexical
     "filler_count", "filler_rate", "repeated_word_count", "false_start_count",
@@ -41,7 +33,7 @@ FEATURE_COLS = [
 
 
 # ─────────────────────────────────────────────
-# STEP 1: Text Embedding with BERT
+# BERT Embedding
 # ─────────────────────────────────────────────
 
 def load_bert():
@@ -54,14 +46,7 @@ def load_bert():
 
 
 def get_bert_embedding(text: str, tokenizer, model) -> np.ndarray:
-    """
-    Passes transcript text through BERT and returns the [CLS] token
-    embedding as a 768-dimensional vector. The CLS token is BERT's
-    summary representation of the entire input sentence.
-    Returns zeros if text is empty.
-    """
     import torch
-
     if not text or str(text).strip() == "":
         return np.zeros(768, dtype=np.float32)
 
@@ -72,80 +57,25 @@ def get_bert_embedding(text: str, tokenizer, model) -> np.ndarray:
         max_length=128,
         padding=True
     )
-
     with torch.no_grad():
         outputs = model(**inputs)
 
-    # CLS token is the first token of the last hidden state
     cls_embedding = outputs.last_hidden_state[:, 0, :].squeeze().numpy()
     return cls_embedding.astype(np.float32)
 
 
 # ─────────────────────────────────────────────
-# STEP 2: Numeric Feature Cleaning & Scaling
-# ─────────────────────────────────────────────
-
-def clean_numeric_features(df: pd.DataFrame, fit: bool = True) -> np.ndarray:
-    available = [c for c in FEATURE_COLS if c in df.columns]
-    missing   = [c for c in FEATURE_COLS if c not in df.columns]
-
-    if missing:
-        print(f"  [WARN] These feature cols are missing from CSV: {missing}")
-
-    # Explicitly select ONLY the feature columns — nothing else
-    X = df[available].copy().values.astype(np.float64)
-
-    if fit:
-        imputer = SimpleImputer(strategy="mean")
-        scaler  = StandardScaler()
-        X = imputer.fit_transform(X)
-        X = scaler.fit_transform(X)
-        joblib.dump(imputer, IMPUTER_PATH)
-        joblib.dump(scaler,  SCALER_PATH)
-        print(f"  Imputer and scaler saved.")
-    else:
-        imputer = joblib.load(IMPUTER_PATH)
-        scaler  = joblib.load(SCALER_PATH)
-        X = imputer.transform(X)
-        X = scaler.transform(X)
-
-    return X.astype(np.float32)
-
-
-# ─────────────────────────────────────────────
-# STEP 3: Feature Concatenation
-# ─────────────────────────────────────────────
-
-def build_feature_vector(
-    bert_embedding: np.ndarray,
-    numeric_features: np.ndarray
-) -> np.ndarray:
-    """
-    Concatenates the BERT embedding (768-dim) with the scaled numeric
-    features (n-dim) into a single 1D feature vector per chunk.
-    This is the final input vector that gets fed into the model.
-    """
-    return np.concatenate([bert_embedding, numeric_features]).astype(np.float32)
-
-
-# ─────────────────────────────────────────────
-# MASTER FUNCTION: Run All of Phase 4
+# MASTER FUNCTION
+# Saves raw (unscaled) BERT + numeric matrices.
+# Scaling happens inside train() AFTER the split
+# to prevent data leakage.
 # ─────────────────────────────────────────────
 
 def build_phase4_vectors(
-    phase3_csv: str  = "/content/processed/phase3_features.csv",
+    phase3_csv:  str = "/content/processed/phase3_features.csv",
     output_path: str = "/content/processed/phase4_vectors.npz",
-    fit_scalers: bool = True
 ) -> dict:
-    """
-    Reads Phase 3 CSV, builds BERT embeddings for every transcript,
-    cleans and scales all numeric features, concatenates them into
-    one final feature vector per chunk, and saves everything as a
-    .npz file (compressed numpy arrays).
 
-    Returns a dict with keys: X (feature matrix), y (labels),
-    feature_dim (total vector size), chunk_files (for reference).
-    """
     print("Loading Phase 3 data...")
     df = pd.read_csv(phase3_csv)
     print(f"  {len(df)} chunks loaded.\n")
@@ -160,40 +90,41 @@ def build_phase4_vectors(
         emb = get_bert_embedding(transcript, tokenizer, bert_model)
         bert_embeddings.append(emb)
 
-    bert_matrix = np.stack(bert_embeddings, axis=0)  # shape: (N, 768)
+    bert_matrix = np.stack(bert_embeddings, axis=0)
     print(f"  BERT matrix shape: {bert_matrix.shape}")
 
-    # ── Numeric features ──
-    print("\nScaling numeric features...")
-    numeric_matrix = clean_numeric_features(df, fit=fit_scalers)
-    print(f"  Numeric matrix shape: {numeric_matrix.shape}")
+    # ── Raw numeric features — NO scaling here ──
+    available = [c for c in FEATURE_COLS if c in df.columns]
+    missing   = [c for c in FEATURE_COLS if c not in df.columns]
+    if missing:
+        print(f"  [WARN] Missing feature cols: {missing}")
 
-    # ── Concatenate ──
-    print("\nConcatenating feature vectors...")
-    X = np.concatenate([bert_matrix, numeric_matrix], axis=1)
-    y = df["label"].values.astype(np.int64)
+    numeric_matrix = df[available].copy().values.astype(np.float32)
+    print(f"  Numeric matrix shape (raw): {numeric_matrix.shape}")
 
-    print(f"  Final feature matrix shape: {X.shape}")
-    print(f"  Labels — Real: {np.sum(y==1)}, Fake: {np.sum(y==0)}")
-
-    # ── Save as compressed numpy file ──
+    y           = df["label"].values.astype(np.int64)
     chunk_files = df["chunk_file"].values
+
+    print(f"\n  Labels — Real: {np.sum(y==1)}, Fake: {np.sum(y==0)}")
+
     np.savez_compressed(
         output_path,
-        X=X,
+        bert=bert_matrix,
+        numeric=numeric_matrix,
         y=y,
         chunk_files=chunk_files
     )
-    print(f"\n✅ Phase 4 complete. Vectors saved to: {output_path}")
+
+    print(f"\n✅ Phase 4 complete. Saved to: {output_path}")
+    print(f"   BERT dim: {bert_matrix.shape[1]}, Numeric dim: {numeric_matrix.shape[1]}")
 
     return {
-        "X":           X,
+        "bert":        bert_matrix,
+        "numeric":     numeric_matrix,
         "y":           y,
-        "feature_dim": X.shape[1],
-        "chunk_files": chunk_files
+        "chunk_files": chunk_files,
     }
 
 
 if __name__ == "__main__":
-    result = build_phase4_vectors()
-    print(f"Feature vector dimension: {result['feature_dim']}")
+    build_phase4_vectors()
