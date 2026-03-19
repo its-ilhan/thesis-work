@@ -111,6 +111,19 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
 
     print(f"Found {len(all_files)} audio files.\n")
 
+    # Separate real and fake, sort for consistency
+    real_files = sorted([f for f in all_files
+                        if "real" in f.lower().replace("\\", "/").split("/")])
+    fake_files = sorted([f for f in all_files
+                        if "fake" in f.lower().replace("\\", "/").split("/")])
+
+    # Shuffle with fixed seed — same files selected every run
+    import random
+    random.seed(42)
+    random.shuffle(real_files)
+    random.seed(42)
+    random.shuffle(fake_files)
+
     # ── Safety cap: remove when ready for full dataset ──
     # Separate real and fake files
     real_files = [f for f in all_files if "real" in f.lower().replace("\\", "/").split("/")]

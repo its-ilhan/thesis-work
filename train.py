@@ -23,7 +23,7 @@ VECTORS_PATH = "/content/processed/phase4_vectors.npz"
 OUTPUT_DIR   = "/content/processed"
 MODEL_PATH   = "/content/processed/best_model.pt"
 
-BATCH_SIZE   = 32
+BATCH_SIZE   = 16
 EPOCHS       = 50
 LR           = 1e-4
 WEIGHT_DECAY = 1e-4
@@ -31,8 +31,19 @@ VAL_SPLIT    = 0.2
 SEED         = 42
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-torch.manual_seed(SEED)
-np.random.seed(SEED)
+
+def set_all_seeds(seed):
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ['PYTHONHASHSEED'] = str(seed)
+
+set_all_seeds(SEED)
 
 
 # ─────────────────────────────────────────────
@@ -217,6 +228,7 @@ def plot_confusion_matrix(labels, preds):
 # ─────────────────────────────────────────────
 
 def train(vectors_path: str = VECTORS_PATH):
+    set_all_seeds(SEED)
     # ── Device ──
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}\n")
