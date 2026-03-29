@@ -128,8 +128,8 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
     rng.shuffle(fake_files)
 
     CAP = 30000
-    real_files = real_files[20000:CAP]
-    fake_files = fake_files[20000:CAP]
+    real_files = real_files[25000:CAP]
+    fake_files = fake_files[25000:CAP]
     all_files  = real_files + fake_files
 
     print(f"Training run: {len(real_files)} real + {len(fake_files)} fake files.")

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deepfake Audio Detector</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 h-screen flex items-center justify-center font-sans">
+
+    <div class="bg-white p-8 rounded-xl shadow-lg max-w-md w-full text-center">
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">Deepfake Audio Detector</h1>
+        <p class="text-gray-500 mb-6">Upload an audio clip to analyze if it is Human or AI-generated.</p>
+
+        <input type="file" id="audioFile" accept="audio/*" class="hidden" />
+        <label for="audioFile" class="cursor-pointer flex flex-col items-center justify-center border-2 border-dashed border-blue-400 rounded-lg p-6 bg-blue-50 hover:bg-blue-100 transition">
+            <svg class="w-10 h-10 text-blue-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+            <span id="fileName" class="text-blue-600 font-medium">Select an Audio File</span>
+        </label>
+
+        <button id="analyzeBtn" class="mt-6 w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition hidden">
+            Analyze Audio
+        </button>
+
+        <div id="loading" class="mt-6 hidden">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+            <p class="text-gray-500 mt-2 text-sm">Extracting acoustic & linguistic features...</p>
+        </div>
+
+        <div id="result" class="mt-8 hidden border-t pt-6">
+            <h2 id="classification" class="text-3xl font-extrabold mb-2"></h2>
+            <p class="text-gray-600">Confidence: <span id="confidence" class="font-bold text-gray-900"></span>%</p>
+            
+            <div class="w-full bg-gray-200 rounded-full h-2.5 mt-4">
+              <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('audioFile');
+        const fileNameDisplay = document.getElementById('fileName');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const loading = document.getElementById('loading');
+        const resultDiv = document.getElementById('result');
+
+        // Show selected file name
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                fileNameDisplay.textContent = e.target.files[0].name;
+                analyzeBtn.classList.remove('hidden');
+                resultDiv.classList.add('hidden');
+            }
+        });
+
+        // Handle the upload
+        analyzeBtn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            // UI Updates
+            analyzeBtn.classList.add('hidden');
+            loading.classList.remove('hidden');
+            resultDiv.classList.add('hidden');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                // Send to FastAPI Backend
+                const response = await fetch('http://localhost:8000/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    // Update UI with results
+                    document.getElementById('classification').textContent = data.classification;
+                    document.getElementById('classification').className = `text-3xl font-extrabold mb-2 ${data.classification === 'Human' ? 'text-green-600' : 'text-red-600'}`;
+                    document.getElementById('confidence').textContent = data.confidence;
+                    
+                    document.getElementById('progressBar').style.width = `${data.confidence}%`;
+                    document.getElementById('progressBar').className = `h-2.5 rounded-full ${data.classification === 'Human' ? 'bg-green-600' : 'bg-red-600'}`;
+
+                    resultDiv.classList.remove('hidden');
+                } else {
+                    alert("Error: " + data.message);
+                }
+            } catch (error) {
+                alert("Failed to connect to the backend API.");
+            } finally {
+                loading.classList.add('hidden');
+                analyzeBtn.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
