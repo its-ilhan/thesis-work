@@ -1,0 +1,12 @@
+torch
+torchaudio
+openai-whisper
+librosa
+soundfile
+numpy
+pandas
+tqdm
+praat-parselmouth
+scikit-learn
+joblib
+transformers
