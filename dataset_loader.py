@@ -2,10 +2,15 @@
 # dataset_loader.py
 # Covers Phase 1 (audio prep + transcription) and
 #         Phase 2 (NLP linguistic feature extraction)
+#
+# Supports two datasets:
+#   FoR Dataset  — folders named real/ and fake/
+#   BanglaFake   — folders named real_wav/ and deepfake_wav/
 # ═══════════════════════════════════════════════════════════════
 
 import os
 import ast
+import random
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -28,11 +33,20 @@ sentiment_analyzer = pipeline(
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
-SAMPLE_RATE     = 16000
-CHUNK_DURATION  = 10
-DATASET_ROOT = "/content/bangla_dataset"
-OUTPUT_DIR      = "/content/processed"
-WHISPER_MODEL   = "base"
+SAMPLE_RATE    = 16000
+CHUNK_DURATION = 10
+WHISPER_MODEL  = "base"
+OUTPUT_DIR     = "/content/processed"
+
+# ── Set this to your dataset root ──
+# For BanglaFake (from Google Drive):
+DATASET_ROOT = "/content/drive/MyDrive/colab_notebooks/bangla_dataset/final_data"
+
+# For FoR dataset (comment above and uncomment below):
+# DATASET_ROOT = "/content/thesis-work/dataset"
+
+# ── How many files per class to use ──
+CAP = 3000
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -64,11 +78,15 @@ def chunk_audio(audio_path: str):
 
 
 def transcribe_chunk(model, chunk: np.ndarray) -> dict:
-    """Transcribe audio chunk with Whisper, returning text + word timestamps."""
+    """
+    Transcribe audio chunk with Whisper.
+    Language set to 'bn' for BanglaFake dataset.
+    Change to 'en' if switching back to FoR dataset.
+    """
     result = model.transcribe(
         chunk.astype(np.float32),
         word_timestamps=True,
-        language="en"
+        language="bn"
     )
     words = []
     for segment in result.get("segments", []):
@@ -85,24 +103,19 @@ def transcribe_chunk(model, chunk: np.ndarray) -> dict:
 
 
 def get_label_from_path(filepath: str) -> int:
-    """
-    Supports both FoR dataset (real/fake folders)
-    and BanglaFake dataset (real_wav/deepfake_wav folders).
-    """
-    path_lower = filepath.lower().replace("\\", "/")
-    parts = path_lower.split("/")
+    parts = filepath.lower().replace("\\", "/").split("/")
 
-    # FoR dataset labels
-    if "real" in parts:
+    # Replace 'your_new_real_folder' and 'your_new_fake_folder'
+    if "your_new_real_folder" in parts:
         return 1
-    elif "fake" in parts:
+    if "your_new_fake_folder" in parts:
         return 0
-
-    # BanglaFake dataset labels
-    if "real_wav" in parts:
-        return 1
-    elif "deepfake_wav" in parts:
-        return 0
+        
+    # (You can keep the old ones as fallbacks if you want)
+    if "real_wav" in parts: return 1
+    if "deepfake_wav" in parts: return 0
+    if "real" in parts: return 1
+    if "fake" in parts: return 0
 
     raise ValueError(f"Cannot determine label from path: {filepath}")
 
@@ -117,31 +130,47 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
 
     all_files = []
     for root, _, files in os.walk(DATASET_ROOT):
-        for fname in sorted(files):  # sort files within each folder
+        for fname in sorted(files):
             if os.path.splitext(fname)[1].lower() in audio_extensions:
                 all_files.append(os.path.join(root, fname))
 
     print(f"Found {len(all_files)} audio files.\n")
 
-    # Separate real and fake
-    real_files = [f for f in all_files
-                  if "real" in f.lower().replace("\\", "/").split("/")]
-    fake_files = [f for f in all_files
-                  if "fake" in f.lower().replace("\\", "/").split("/")]
+    # Separate real and fake using updated label logic
+    real_files = []
+    fake_files = []
 
-    # Sort first for consistent base ordering across all systems
+    for f in all_files:
+        parts = f.lower().replace("\\", "/").split("/")
+        
+        # Update these to match your new dataset's actual folder names
+        if "your_new_real_folder" in parts:
+            real_files.append(f)
+        elif "your_new_fake_folder" in parts:
+            fake_files.append(f)
+        # Keep old ones as fallbacks
+        elif "real_wav" in parts:
+            real_files.append(f)
+        elif "deepfake_wav" in parts:
+            fake_files.append(f)
+        elif "real" in parts:
+            real_files.append(f)
+        elif "fake" in parts:
+            fake_files.append(f)
+
+    print(f"Total real files found : {len(real_files)}")
+    print(f"Total fake files found : {len(fake_files)}\n")
+
+    # Sort then shuffle with fixed seed for reproducibility
     real_files = sorted(real_files)
     fake_files = sorted(fake_files)
 
-    # Then shuffle with a fixed seed — same shuffle every single run
-    import random
     rng = random.Random(42)
     rng.shuffle(real_files)
     rng.shuffle(fake_files)
 
-    CAP = 40000
-    real_files = real_files[37000:CAP]
-    fake_files = fake_files[37000:CAP]
+    real_files = real_files[:CAP]
+    fake_files = fake_files[:CAP]
     all_files  = real_files + fake_files
 
     print(f"Training run: {len(real_files)} real + {len(fake_files)} fake files.")
@@ -194,15 +223,9 @@ FILLER_WORDS = {
     "literally", "actually", "right", "okay", "hmm", "ah", "er"
 }
 
-# ─────────────────────────────────────────────
-# VECTOR 1: Lexical & Syntactic Anomalies
-# ─────────────────────────────────────────────
 
 def extract_lexical_features(transcript: str) -> dict:
-    """
-    Detects human speech 'messiness' — filler words, repeated words,
-    false starts, vocabulary diversity. AI speech is unnaturally clean.
-    """
+    """Detects human speech messiness — filler words, repeated words, etc."""
     empty = {
         "filler_count": 0, "filler_rate": 0.0,
         "repeated_word_count": 0, "false_start_count": 0,
@@ -221,9 +244,8 @@ def extract_lexical_features(transcript: str) -> dict:
     if total_words == 0:
         return empty
 
-    filler_count = sum(1 for w in words if w in FILLER_WORDS)
-    filler_rate  = filler_count / total_words
-
+    filler_count        = sum(1 for w in words if w in FILLER_WORDS)
+    filler_rate         = filler_count / total_words
     repeated_word_count = sum(
         1 for i in range(1, len(words)) if words[i] == words[i - 1]
     )
@@ -234,11 +256,10 @@ def extract_lexical_features(transcript: str) -> dict:
             if tokens[i + 1].text == ",":
                 false_start_count += 1
 
-    unique_word_ratio = len(set(words)) / total_words
-    avg_word_length   = float(np.mean([len(w) for w in words]))
-
-    sentences          = list(doc.sents)
-    sentence_count     = len(sentences)
+    unique_word_ratio   = len(set(words)) / total_words
+    avg_word_length     = float(np.mean([len(w) for w in words]))
+    sentences           = list(doc.sents)
+    sentence_count      = len(sentences)
     avg_sentence_length = float(np.mean(
         [len([t for t in s if not t.is_space]) for s in sentences]
     )) if sentences else 0.0
@@ -254,10 +275,6 @@ def extract_lexical_features(transcript: str) -> dict:
         "avg_sentence_length":  round(avg_sentence_length, 4),
     }
 
-
-# ─────────────────────────────────────────────
-# VECTOR 2: Prosodic-Linguistic Mapping
-# ─────────────────────────────────────────────
 
 def parse_word_timestamps(raw: str) -> list:
     """Parse the word_timestamps string from Phase 1 CSV into a list of dicts."""
@@ -279,12 +296,7 @@ def get_dependency_relation(word: str, doc) -> str:
 
 
 def extract_prosodic_features(transcript: str, word_timestamps: list) -> dict:
-    """
-    Calculates pause durations and checks whether pauses fall in
-    natural positions (conjunctions, sentence ends) or unnatural ones
-    (inside tight word pairs like adjective+noun). AI speech places
-    pauses incorrectly because it has no breath or fatigue constraints.
-    """
+    """Calculates pause durations and maps them against sentence structure."""
     empty = {
         "pause_count": 0, "avg_pause_duration": 0.0,
         "max_pause_duration": 0.0, "unnatural_pause_count": 0,
@@ -302,7 +314,7 @@ def extract_prosodic_features(transcript: str, word_timestamps: list) -> dict:
         "and", "but", "or", "because", "although",
         "however", "so", "yet", "for", "nor"
     }
-    PAUSE_THRESHOLD = 0.15  # seconds
+    PAUSE_THRESHOLD = 0.15
 
     pauses                   = []
     unnatural_pause_count    = 0
@@ -353,21 +365,14 @@ def extract_prosodic_features(transcript: str, word_timestamps: list) -> dict:
     }
 
 
-# ─────────────────────────────────────────────
-# VECTOR 3: Sentiment / Emotion Detection
-# ─────────────────────────────────────────────
-
 LABEL_TO_SCORE = {
     "positive": 1.0,  "neutral": 0.0,  "negative": -1.0,
     "label_0":  -1.0, "label_1": 0.0,  "label_2":   1.0,
 }
 
+
 def extract_sentiment_features(transcript: str) -> dict:
-    """
-    Runs RoBERTa sentiment on the transcript. This score is later
-    cross-referenced against pitch/energy in Phase 3 — emotional text
-    with flat acoustics is a strong deepfake signal.
-    """
+    """Runs RoBERTa sentiment on the transcript."""
     empty = {
         "sentiment_label": "neutral",
         "sentiment_score": 0.0,
@@ -390,20 +395,12 @@ def extract_sentiment_features(transcript: str) -> dict:
     except Exception as e:
         print(f"  [WARN] Sentiment failed: {e}")
         return empty
-
-
-# ─────────────────────────────────────────────
-# MASTER FUNCTION: Run All of Phase 2
-# ─────────────────────────────────────────────
-
+    
 def build_phase2_features(
     phase1_csv: str = "/content/processed/phase1_metadata.csv",
     output_csv: str = "/content/processed/phase2_features.csv"
 ) -> pd.DataFrame:
-    """
-    Reads Phase 1 CSV, runs all three linguistic vectors on every row,
-    saves enriched CSV with all new feature columns appended.
-    """
+    """Reads Phase 1 CSV, runs all three linguistic vectors, saves enriched CSV."""
     print("Loading Phase 1 data...")
     df = pd.read_csv(phase1_csv)
     print(f"  {len(df)} chunks loaded.\n")
