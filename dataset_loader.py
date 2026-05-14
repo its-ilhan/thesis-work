@@ -30,7 +30,7 @@ sentiment_analyzer = pipeline(
 # ─────────────────────────────────────────────
 SAMPLE_RATE     = 16000
 CHUNK_DURATION  = 10
-DATASET_ROOT    = "/content/thesis-work/dataset"
+DATASET_ROOT = "/content/bangla_dataset"
 OUTPUT_DIR      = "/content/processed"
 WHISPER_MODEL   = "base"
 
@@ -85,14 +85,26 @@ def transcribe_chunk(model, chunk: np.ndarray) -> dict:
 
 
 def get_label_from_path(filepath: str) -> int:
-    """Return 1 for real, 0 for fake based on folder name."""
-    parts = filepath.lower().replace("\\", "/").split("/")
+    """
+    Supports both FoR dataset (real/fake folders)
+    and BanglaFake dataset (real_wav/deepfake_wav folders).
+    """
+    path_lower = filepath.lower().replace("\\", "/")
+    parts = path_lower.split("/")
+
+    # FoR dataset labels
     if "real" in parts:
         return 1
     elif "fake" in parts:
         return 0
-    else:
-        raise ValueError(f"Cannot determine label from path: {filepath}")
+
+    # BanglaFake dataset labels
+    if "real_wav" in parts:
+        return 1
+    elif "deepfake_wav" in parts:
+        return 0
+
+    raise ValueError(f"Cannot determine label from path: {filepath}")
 
 
 def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
