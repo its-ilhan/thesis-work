@@ -47,7 +47,7 @@ CHUNK_DURATION = 10
 WHISPER_MODEL  = "base"
 OUTPUT_DIR     = "/content/processed"
 DATASET_ROOT   = "/content/bangla_dataset/final_data"
-CAP            = 3000   # files per class — adjust as needed
+CAP            = 500   # files per class — adjust as needed
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
