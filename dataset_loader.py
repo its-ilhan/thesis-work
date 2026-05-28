@@ -1,11 +1,20 @@
 # ═══════════════════════════════════════════════════════════════
 # dataset_loader.py
-# Covers Phase 1 (audio prep + transcription) and
-#         Phase 2 (NLP linguistic feature extraction)
+# Phase 1: Audio prep + transcription
+# Phase 2: NLP linguistic feature extraction
 #
-# Supports two datasets:
-#   FoR Dataset  — folders named real/ and fake/
-#   BanglaFake   — folders named real_wav/ and deepfake_wav/
+# Dataset: BanglaFake
+# Structure:
+#   /content/bangla_dataset/final_data/
+#     deepfake_data_mozilla/
+#       real_wav/      → label 1
+#       deepfake_wav/  → label 0
+#     deepfake_data_news/
+#       real_wav/      → label 1
+#       deepfake_wav/  → label 0
+#     deepfake_data_sust/
+#       real_wav/      → label 1
+#       deepfake_wav/  → label 0
 # ═══════════════════════════════════════════════════════════════
 
 import os
@@ -37,16 +46,8 @@ SAMPLE_RATE    = 16000
 CHUNK_DURATION = 10
 WHISPER_MODEL  = "base"
 OUTPUT_DIR     = "/content/processed"
-
-# ── Set this to your dataset root ──
-# For BanglaFake (from Google Drive):
-DATASET_ROOT = "/content/drive/MyDrive/colab_notebooks/bangla_dataset/final_data"
-
-# For FoR dataset (comment above and uncomment below):
-# DATASET_ROOT = "/content/thesis-work/dataset"
-
-# ── How many files per class to use ──
-CAP = 3000
+DATASET_ROOT   = "/content/bangla_dataset/final_data"
+CAP            = 3000   # files per class — adjust as needed
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -78,15 +79,11 @@ def chunk_audio(audio_path: str):
 
 
 def transcribe_chunk(model, chunk: np.ndarray) -> dict:
-    """
-    Transcribe audio chunk with Whisper.
-    Language set to 'bn' for BanglaFake dataset.
-    Change to 'en' if switching back to FoR dataset.
-    """
+    """Transcribe audio chunk with Whisper, returning text + word timestamps."""
     result = model.transcribe(
         chunk.astype(np.float32),
         word_timestamps=True,
-        language="bn"
+        language="bn"   # Bangla — change to "en" for FoR dataset
     )
     words = []
     for segment in result.get("segments", []):
@@ -103,20 +100,15 @@ def transcribe_chunk(model, chunk: np.ndarray) -> dict:
 
 
 def get_label_from_path(filepath: str) -> int:
+    """
+    Returns 1 for real, 0 for fake.
+    Checks folder names real_wav and deepfake_wav only.
+    """
     parts = filepath.lower().replace("\\", "/").split("/")
-
-    # Replace 'your_new_real_folder' and 'your_new_fake_folder'
-    if "your_new_real_folder" in parts:
+    if "real_wav" in parts:
         return 1
-    if "your_new_fake_folder" in parts:
+    if "deepfake_wav" in parts:
         return 0
-        
-    # (You can keep the old ones as fallbacks if you want)
-    if "real_wav" in parts: return 1
-    if "deepfake_wav" in parts: return 0
-    if "real" in parts: return 1
-    if "fake" in parts: return 0
-
     raise ValueError(f"Cannot determine label from path: {filepath}")
 
 
@@ -136,26 +128,14 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
 
     print(f"Found {len(all_files)} audio files.\n")
 
-    # Separate real and fake using updated label logic
+    # Separate using exact folder name matching — no ambiguity
     real_files = []
     fake_files = []
-
     for f in all_files:
         parts = f.lower().replace("\\", "/").split("/")
-        
-        # Update these to match your new dataset's actual folder names
-        if "your_new_real_folder" in parts:
-            real_files.append(f)
-        elif "your_new_fake_folder" in parts:
-            fake_files.append(f)
-        # Keep old ones as fallbacks
-        elif "real_wav" in parts:
+        if "real_wav" in parts:
             real_files.append(f)
         elif "deepfake_wav" in parts:
-            fake_files.append(f)
-        elif "real" in parts:
-            real_files.append(f)
-        elif "fake" in parts:
             fake_files.append(f)
 
     print(f"Total real files found : {len(real_files)}")
@@ -183,16 +163,20 @@ def build_dataset(whisper_model_size: str = WHISPER_MODEL) -> pd.DataFrame:
             print(f"  [SKIP] {e}")
             continue
 
-        clean_name = "clean_" + os.path.basename(filepath).replace(" ", "_")
-        clean_name = os.path.splitext(clean_name)[0] + ".wav"
-        clean_path = os.path.join(OUTPUT_DIR, clean_name)
+        # ── FIX: include label prefix to avoid filename collisions ──
+        # real_wav and deepfake_wav share identical filenames (e.g.
+        # common_voice_s1_0.wav exists in both). Without a prefix,
+        # one would silently overwrite the other in OUTPUT_DIR.
+        label_prefix = "real" if label == 1 else "fake"
+        base_name    = os.path.basename(filepath).replace(" ", "_")
+        clean_name   = f"clean_{label_prefix}_{os.path.splitext(base_name)[0]}.wav"
+        clean_path   = os.path.join(OUTPUT_DIR, clean_name)
 
         if not preprocess_audio(filepath, clean_path):
             continue
 
         for chunk_idx, (chunk, start_time) in enumerate(chunk_audio(clean_path)):
-            transcription = transcribe_chunk(model, chunk)
-
+            transcription  = transcribe_chunk(model, chunk)
             chunk_filename = f"chunk{chunk_idx}_{clean_name}"
             chunk_out_path = os.path.join(OUTPUT_DIR, chunk_filename)
             sf.write(chunk_out_path, chunk, SAMPLE_RATE)
@@ -395,7 +379,8 @@ def extract_sentiment_features(transcript: str) -> dict:
     except Exception as e:
         print(f"  [WARN] Sentiment failed: {e}")
         return empty
-    
+
+
 def build_phase2_features(
     phase1_csv: str = "/content/processed/phase1_metadata.csv",
     output_csv: str = "/content/processed/phase2_features.csv"
